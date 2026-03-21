@@ -1,0 +1,21 @@
+[Unit]
+Description=AuraLink Control Daemon
+Documentation=https://github.com/local/auralink-control
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/auralink-control
+ExecStart=/usr/bin/python /opt/auralink-control/src/main.py
+ExecStartPost=/usr/bin/bash -c 'INTERFACE=$(ip route get 1.1.1.1 2>/dev/null | grep -oP "dev \\K\\S+"); if [ -n "$INTERFACE" ] && command -v ethtool >/dev/null 2>&1; then ethtool -s $INTERFACE wol g || true; fi'
+Restart=always
+RestartSec=10
+Nice=15
+IOSchedulingClass=idle
+NoNewPrivileges=false
+PrivateTmp=true
+StandardOutput=append:/opt/auralink-control/logs/daemon.log
+StandardError=append:/opt/auralink-control/logs/error.log
+[Install]
+WantedBy=multi-user.target

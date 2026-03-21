@@ -1,0 +1,19 @@
+server:
+  host: "0.0.0.0"
+  port: 8443
+  cert: "certs/cert.pem"
+  key: "certs/key.pem"
+
+auth:
+  pin_hash: "$2b$12$..." # Reemplaza con tu hash de bcrypt
+  jwt_secret: "CAMBIAME_POR_ALGO_SEGURO"
+  jwt_expiry_hours: 24
+  max_attempts: 5
+  lockout_minutes: 15
+
+boot:
+  windows_id: "0001" # ID de efibootmgr para Windows
+  arch_id: "0002"    # ID de efibootmgr para Arch
+
+security:
+  allowed_macs: [] # Lista blanca de MACs (ej: ["AA:BB:CC..."])
