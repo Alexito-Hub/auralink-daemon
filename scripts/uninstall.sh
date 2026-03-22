@@ -51,11 +51,27 @@ if [ -d "$INSTALL_DIR" ]; then
     fi
 fi
 
-if [ -f "$SHARED_CONFIG" ]; then
-    echo -e "\n  ${BLUE}ℹ Se detectó una configuración en la partición compartida.${NC}"
-    read -p "  ¿Desea eliminar el archivo de configuración ($SHARED_CONFIG)? (s/n): " REMOVE_CONFIG
-    if [ "$REMOVE_CONFIG" = "s" ]; then
-        run_step "Eliminando configuración compartida" "sudo rm $SHARED_CONFIG"
+if grep -q "LABEL=AURA" /etc/fstab; then
+    echo -e "\n${YELLOW}[ FASE 2.5 ] Limpieza de Partición Compartida (AURA)${NC}"
+    read -p "  ¿Desea desmontar y eliminar la persistencia de AURA en fstab? (s/n): " REMOVE_FSTAB
+    if [ "$REMOVE_FSTAB" = "s" ]; then
+        AURA_MOUNT=$(grep "LABEL=AURA" /etc/fstab | awk '{print $2}')
+        if [ -n "$AURA_MOUNT" ]; then
+            run_step "Desmontando partición AURA" "sudo umount $AURA_MOUNT"
+        fi
+        run_step "Eliminando entrada de fstab" "sudo sed -i '/LABEL=AURA/d' /etc/fstab"
+        
+        AURA_DEV=$(lsblk -dno NAME,LABEL | grep -i "AURA" | awk '{print "/dev/"$1}' | head -n1)
+        if [ -n "$AURA_DEV" ]; then
+            read -p "  ¿Desea ELIMINAR físicamente la partición AURA en $AURA_DEV? (s/n): " DELETE_PART
+            if [ "$DELETE_PART" = "s" ]; then
+                PARENT_DISK=$(lsblk -no PKNAME "$AURA_DEV" | head -n1)
+                PART_NUM=$(echo "$AURA_DEV" | grep -o '[0-9]\+$')
+                if [ -n "$PARENT_DISK" ] && [ -n "$PART_NUM" ]; then
+                    run_step "Eliminando partición física" "sudo parted -s /dev/$PARENT_DISK rm $PART_NUM"
+                fi
+            fi
+        fi
     fi
 fi
 
