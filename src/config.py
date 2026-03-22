@@ -10,10 +10,20 @@ def get_path_by_label(label="AURA"):
     system = platform.system()
     try:
         if system == "Windows":
+            # Listar todos los volumenes para depuración
+            cmd_list = ["powershell", "-Command", "Get-Volume | Select-Object DriveLetter, FileSystemLabel | ConvertTo-Json"]
+            res_list = subprocess.run(cmd_list, capture_output=True, text=True, timeout=5)
+            logger.info(f"Escaneando unidades en Windows...")
+            
             cmd = ["powershell", "-Command", f"Get-Volume -FileSystemLabel '{label}' | Select-Object -ExpandProperty DriveLetter"]
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
             letter = res.stdout.strip()
-            if letter: return Path(f"{letter}:/AuraLink/config.yaml")
+            if letter:
+                path = Path(f"{letter}:/AuraLink/config.yaml")
+                logger.info(f"¡Partición {label} detectada en unidad {letter}:!")
+                return path
+            else:
+                logger.warning(f"No se encontró ninguna unidad con la etiqueta '{label}'.")
         else:
             label_path = Path(f"/dev/disk/by-label/{label}")
             if label_path.exists():
@@ -22,7 +32,8 @@ def get_path_by_label(label="AURA"):
                         parts = line.split()
                         if len(parts) >= 2 and (parts[0] == str(label_path.resolve()) or f"LABEL={label}" in parts[0]):
                             return Path(parts[1]) / "AuraLink/config.yaml"
-    except Exception: pass
+    except Exception as e:
+        logger.error(f"Error escaneando particiones: {e}")
     return None
 def get_config_path():
     env_path = os.environ.get("AURALINK_CONFIG_PATH")
