@@ -36,7 +36,6 @@ def set_next_boot(target: str) -> dict:
     boot_config = CONFIG["boot"]
     
     if platform.system() == "Windows":
-        # Lógica para Windows usando bcdedit
         if target == "windows": return {"status": "ok", "message": "Windows ya es el sistema actual"}
         elif target == "arch": 
             boot_id = boot_config.get("arch_bcd_id") or boot_config.get("arch_id")
@@ -46,24 +45,37 @@ def set_next_boot(target: str) -> dict:
         if not boot_id: return {"status": "error", "message": "ID de Arch no configurado en config.yaml (arch_bcd_id)"}
         
         try:
-            # En Windows, bcdedit /bootnext requiere privilegios de administrador
+            # Validar si el ID existe en bcdedit antes de intentar aplicarlo
+            check = subprocess.run(["bcdedit", "/enum", "firmware"], capture_output=True, text=True, timeout=5)
+            if boot_id.lower() not in check.stdout.lower():
+                return {"status": "error", "message": f"El ID {boot_id} no fue encontrado en el BCD de Windows. Verifica config.yaml."}
+
             result = subprocess.run(["bcdedit", "/bootnext", boot_id], capture_output=True, text=True, timeout=10)
             if result.returncode != 0: 
-                # Intentar un método alternativo si /bootnext falla (algunas versiones antiguas no lo tienen)
-                return {"status": "error", "message": f"Error de bcdedit: {result.stderr.strip()}"}
+                return {"status": "error", "message": f"Fallo bcdedit: {result.stderr.strip() or 'Acceso denegado (¿eres Admin?)'}"}
             return {"status": "ok", "message": f"Próximo boot: {name} (vía BCD)", "boot_id": boot_id, "target": target}
         except Exception as e: return {"status": "error", "message": str(e)}
     
     else:
-        # Lógica para Linux usando efibootmgr (existente)
-        if target == "windows": boot_id, name = boot_config["windows_id"], "Windows 11"
+        # Lógica para Linux usando efibootmgr
+        if target == "windows": boot_id, name = boot_config["windows_id"], "Windows"
         elif target == "arch": boot_id, name = boot_config["arch_id"], "Arch Linux"
         else: return {"status": "error", "message": "Target inválido"}
         
         if not re.match(r"^[0-9A-Fa-f]{4}$", boot_id): return {"status": "error", "message": "ID inválido para efibootmgr"}
+        
         try:
-            result = subprocess.run(["sudo", "efibootmgr", "--bootnext", boot_id], capture_output=True, text=True, timeout=10)
-            if result.returncode != 0: return {"status": "error", "message": result.stderr.strip()}
+            # Verificar si el ID existe en efibootmgr
+            check = subprocess.run(["efibootmgr"], capture_output=True, text=True)
+            if f"Boot{boot_id}" not in check.stdout:
+                return {"status": "error", "message": f"ID {boot_id} no encontrado en EFI. Ejecuta 'efibootmgr' para verificar."}
+
+            # Intentar con sudo si no somos root, o directo si lo somos
+            cmd = ["efibootmgr", "--bootnext", boot_id]
+            if os.getuid() != 0: cmd.insert(0, "sudo")
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode != 0: return {"status": "error", "message": result.stderr.strip() or "Error de permisos en efibootmgr"}
             return {"status": "ok", "message": f"Próximo boot: {name}", "boot_id": boot_id, "target": target}
         except Exception as e: return {"status": "error", "message": str(e)}
 

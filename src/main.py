@@ -1,5 +1,8 @@
 import logging
 import uvicorn
+import platform
+import os
+import ctypes
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +22,19 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s", handlers=handlers)
 logger = logging.getLogger("auralink")
+
+def is_admin():
+    try:
+        if platform.system() == "Windows":
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        else:
+            return os.getuid() == 0
+    except Exception:
+        return False
+
+if not is_admin():
+    logger.warning("¡ATENCION! El daemon no se esta ejecutando con privilegios de Administrador/Root.")
+    logger.warning("Funciones como Shutdown, Reboot, Volumen y Dual Boot podrian no funcionar correctamente.")
 
 app = FastAPI(title="AuraLink Control", version="1.0.0", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
@@ -43,13 +59,31 @@ class LoginRequest(BaseModel):
 async def login(body: LoginRequest, request: Request):
     ip = get_client_ip(request)
     locked, remaining = rate_limiter.is_locked(ip)
-    if locked: raise HTTPException(status_code=429, detail=f"Esperar {remaining}s")
-    if not is_mac_allowed(body.mac): raise HTTPException(status_code=403, detail="No autorizado")
+    if locked:
+        logger.warning(f"BLOQUEO: Intento de acceso desde IP bloqueada {ip}. Faltan {remaining}s")
+        raise HTTPException(status_code=429, detail=f"Esperar {remaining}s")
+    
+    # Check whitelist (si esta vacia, permitimos el paso inicial)
+    if not is_mac_allowed(body.mac):
+        logger.warning(f"ACCESO_DENEGADO: MAC {body.mac} no autorizada desde {ip}")
+        raise HTTPException(status_code=403, detail="No autorizado")
+    
     success = verify_pin(body.pin)
     blocked = rate_limiter.register_attempt(ip, success)
+    
     if not success:
-        if blocked: raise HTTPException(status_code=429, detail="Bloqueado")
+        if blocked:
+            logger.error(f"BLOQUEO_ACTIVADO: Demasiados intentos fallidos desde {ip}")
+            raise HTTPException(status_code=429, detail="Bloqueado por seguridad")
         raise HTTPException(status_code=401, detail="PIN incorrecto")
+    
+    logger.info(f"LOGIN_EXITOSO: Dispositivo {body.mac} autenticado desde {ip}")
+    
+    # AUTO-AUTHORIZE: Si la lista estaba vacia, guardamos el primer dispositivo exitoso
+    from auth import authorize_device
+    if not CONFIG.get("security", {}).get("allowed_macs") and body.mac:
+        authorize_device(body.mac)
+
     token = create_token(ip)
     return {"token": token, "expires_in_hours": CONFIG["auth"]["jwt_expiry_hours"]}
 
