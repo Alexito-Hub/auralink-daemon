@@ -3,54 +3,44 @@ import os
 import platform
 import logging
 import shutil
+import subprocess
 from pathlib import Path
 logger = logging.getLogger("auralink.config")
-def get_shared_path():
+def get_path_by_label(label="AURA"):
     system = platform.system()
-    if system == "Windows":
-        return Path("C:/AuraLink/config.yaml")
-    mount_points = ["/mnt/c", "/run/media", "/media", "/mnt/windows", "/mnt/data"]
-    for base in mount_points:
-        base_path = Path(base)
-        if not base_path.exists(): continue
-        direct_target = base_path / "AuraLink/config.yaml"
-        if direct_target.exists(): return direct_target
-        try:
-            for user_dir in base_path.iterdir():
-                if user_dir.is_dir():
-                    for drive_dir in user_dir.iterdir():
-                        if drive_dir.is_dir():
-                            potential = drive_dir / "AuraLink/config.yaml"
-                            if potential.exists(): return potential
-        except PermissionError: continue
-    return Path("/etc/auralink/config.yaml")
+    try:
+        if system == "Windows":
+            cmd = f"powershell -Command \"(Get-Volume -FileSystemLabel '{label}').DriveLetter\""
+            res = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+            letter = res.stdout.strip()
+            if letter: return Path(f"{letter}:/config.yaml")
+        else:
+            label_path = Path(f"/dev/disk/by-label/{label}")
+            if label_path.exists():
+                cmd = f"findmnt -n -o TARGET --source {label_path.resolve()}"
+                res = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+                mount = res.stdout.strip()
+                if mount: return Path(mount) / "config.yaml"
+    except Exception: pass
+    return None
 def get_config_path():
     env_path = os.environ.get("AURALINK_CONFIG_PATH")
-    if env_path and Path(env_path).exists():
-        return Path(env_path)
-    shared_file = get_shared_path()
-    if shared_file and shared_file.exists():
-        return shared_file
-    local_path = Path(__file__).parent.parent / "config.yaml"
-    if local_path.exists():
-        return local_path
+    if env_path and Path(env_path).exists(): return Path(env_path)
+    label_file = get_path_by_label()
+    if label_file and label_file.exists(): return label_file
     system = platform.system()
     if system == "Windows":
-        program_data = os.environ.get("ProgramData")
-        if program_data:
-            p = Path(program_data) / "AuraLink/config.yaml"
+        for letter in "CDEFGH":
+            p = Path(f"{letter}:/AuraLink/config.yaml")
             if p.exists(): return p
-    return local_path
-def attempt_migration(current_path: Path):
-    shared_file = get_shared_path()
-    shared_dir = shared_file.parent
-    if shared_dir.exists() and not shared_file.exists() and current_path.resolve() != shared_file.resolve():
-        try:
-            shared_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(current_path, shared_file)
-            return shared_file
-        except Exception: pass
-    return current_path
+    else:
+        for p in [Path("/mnt/c/AuraLink/config.yaml"), Path("/run/media")]:
+            if p.exists() and p.is_file(): return p
+            if p.is_dir():
+                try:
+                    for d in p.rglob("AuraLink/config.yaml"): return d
+                except Exception: pass
+    return Path(__file__).parent.parent / "config.yaml"
 def validate_config(config: dict):
     required = {"auth": ["pin_hash", "jwt_secret"], "boot": ["windows_id", "arch_id"], "server": ["host", "port"]}
     defaults = {"auth": {"jwt_expiry_hours": 24, "max_attempts": 5, "lockout_minutes": 15}, "server": {"cert": "certs/cert.pem", "key": "certs/key.pem"}, "security": {"allowed_macs": []}, "boot": {"arch_bcd_id": ""}}
@@ -64,12 +54,8 @@ def validate_config(config: dict):
     return config
 def load_config():
     path = get_config_path()
-    if not path.exists():
-        path = Path(__file__).parent.parent / "config.yaml"
-    path = attempt_migration(path)
     with open(path, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
-        if not config: config = {}
+        config = yaml.safe_load(f) or {}
         return validate_config(config), path
 try:
     CONFIG, CONFIG_FILE_PATH = load_config()
