@@ -4,31 +4,51 @@ import logging
 import time
 import os
 import platform
+
 logger = logging.getLogger("auralink.system")
+
 IS_WINDOWS = platform.system() == "Windows"
+
 if IS_WINDOWS:
     from ctypes import cast, POINTER
     from comtypes import CLSCTX_ALL
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
     import screen_brightness_control as sbc
+    import winreg
+
+def check_fast_startup_windows() -> bool:
+    """Retorna True si Fast Startup está activo (peligroso para AURA)."""
+    if not IS_WINDOWS: return False
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Power")
+        val, _ = winreg.QueryValueEx(key, "HiberbootEnabled")
+        return val == 1
+    except Exception:
+        return False
+
 def get_system_info() -> dict:
     try:
         cpu_percent = psutil.cpu_percent(interval=0.1)
         ram = psutil.virtual_memory()
         battery = psutil.sensors_battery()
+        
         battery_info = None
         if battery:
             battery_info = {"percent": round(battery.percent, 1), "plugged": battery.power_plugged, "time_left": int(battery.secsleft) if battery.secsleft != psutil.POWER_TIME_UNLIMITED else -1}
+        
         mac_address = None
         stats = psutil.net_if_stats()
         addrs = psutil.net_if_addrs()
         best_interface = None
+        
         for interface, info in stats.items():
             if info.isup and interface in addrs:
                 if any(kw in interface.lower() for kw in ["eth", "enp", "ethernet", "wifi", "wlan"]):
                     best_interface = interface
                     break
                 if not best_interface: best_interface = interface
+        
         if best_interface:
             for addr in addrs[best_interface]:
                 if IS_WINDOWS:
@@ -39,6 +59,7 @@ def get_system_info() -> dict:
                     if hasattr(psutil, 'AF_LINK') and addr.family == psutil.AF_LINK:
                         mac_address = addr.address.upper()
                         break
+        
         temps = {}
         if not IS_WINDOWS:
             try:
@@ -48,9 +69,13 @@ def get_system_info() -> dict:
                         temps["cpu"] = round(sensors[key][0].current, 1)
                         break
             except Exception: pass
+            
         lid_closed = False
         disk_path = "C:\\" if IS_WINDOWS else "/"
         disk = psutil.disk_usage(disk_path)
+        
+        fast_startup = check_fast_startup_windows()
+        
         return {
             "status": "ok", 
             "os": platform.system().lower(), 
@@ -61,7 +86,8 @@ def get_system_info() -> dict:
             "lid_closed": lid_closed, 
             "temps": temps, 
             "disk": {"percent": round(disk.percent, 1)}, 
-            "uptime_seconds": int(time.time() - psutil.boot_time())
+            "uptime_seconds": int(time.time() - psutil.boot_time()),
+            "fast_startup_warning": fast_startup
         }
     except Exception as e: return {"status": "error", "message": str(e)}
 def get_volume() -> dict:

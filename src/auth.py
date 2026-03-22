@@ -82,14 +82,15 @@ def is_mac_allowed(mac: str | None) -> bool:
     return mac.lower() in [m.lower() for m in allowed]
 
 def authorize_device(mac: str):
-    from config import CONFIG_FILE_PATH
+    from config import CONFIG_FILE_PATH, safe_write_config
     if not CONFIG_FILE_PATH: return
     try:
         if "security" not in CONFIG: CONFIG["security"] = {"allowed_macs": []}
         if mac not in CONFIG["security"]["allowed_macs"]:
             CONFIG["security"]["allowed_macs"].append(mac)
-            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
-                yaml.dump(CONFIG, f)
-            logger.info(f"Dispositivo autorizado automaticamente y guardado: {mac}")
+            if safe_write_config(CONFIG, CONFIG_FILE_PATH):
+                logger.info(f"Dispositivo autorizado automaticamente y guardado: {mac}")
+            else:
+                logger.error(f"No se pudo guardar la autorización automática para: {mac}")
     except Exception as e:
         logger.error(f"Error al guardar autorizacion automatica: {e}")
