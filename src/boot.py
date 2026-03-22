@@ -8,10 +8,9 @@ from pathlib import Path
 
 logger = logging.getLogger("auralink.boot")
 
-def load_config():
-    config_path = Path(__file__).parent.parent / "config.yaml"
-    if not config_path.exists(): config_path = Path(__file__).parent / "config.yaml"
-    with open(config_path) as f: return yaml.safe_load(f)
+from config import CONFIG
+
+logger = logging.getLogger("auralink.boot")
 
 def get_boot_entries() -> dict:
     try:
@@ -34,17 +33,39 @@ def get_boot_entries() -> dict:
     except Exception as e: return {"status": "error", "message": str(e)}
 
 def set_next_boot(target: str) -> dict:
-    config = load_config()
-    boot_config = config["boot"]
-    if target == "windows": boot_id, name = boot_config["windows_id"], "Windows 11"
-    elif target == "arch": boot_id, name = boot_config["arch_id"], "Arch Linux"
-    else: return {"status": "error", "message": "Target inválido"}
-    if not re.match(r"^[0-9A-Fa-f]{4}$", boot_id): return {"status": "error", "message": "ID inválido"}
-    try:
-        result = subprocess.run(["sudo", "efibootmgr", "--bootnext", boot_id], capture_output=True, text=True, timeout=10)
-        if result.returncode != 0: return {"status": "error", "message": result.stderr.strip()}
-        return {"status": "ok", "message": f"Próximo boot: {name}", "boot_id": boot_id, "target": target}
-    except Exception as e: return {"status": "error", "message": str(e)}
+    boot_config = CONFIG["boot"]
+    
+    if platform.system() == "Windows":
+        # Lógica para Windows usando bcdedit
+        if target == "windows": return {"status": "ok", "message": "Windows ya es el sistema actual"}
+        elif target == "arch": 
+            boot_id = boot_config.get("arch_bcd_id") or boot_config.get("arch_id")
+            name = "Arch Linux"
+        else: return {"status": "error", "message": "Target inválido"}
+        
+        if not boot_id: return {"status": "error", "message": "ID de Arch no configurado en config.yaml (arch_bcd_id)"}
+        
+        try:
+            # En Windows, bcdedit /bootnext requiere privilegios de administrador
+            result = subprocess.run(["bcdedit", "/bootnext", boot_id], capture_output=True, text=True, timeout=10)
+            if result.returncode != 0: 
+                # Intentar un método alternativo si /bootnext falla (algunas versiones antiguas no lo tienen)
+                return {"status": "error", "message": f"Error de bcdedit: {result.stderr.strip()}"}
+            return {"status": "ok", "message": f"Próximo boot: {name} (vía BCD)", "boot_id": boot_id, "target": target}
+        except Exception as e: return {"status": "error", "message": str(e)}
+    
+    else:
+        # Lógica para Linux usando efibootmgr (existente)
+        if target == "windows": boot_id, name = boot_config["windows_id"], "Windows 11"
+        elif target == "arch": boot_id, name = boot_config["arch_id"], "Arch Linux"
+        else: return {"status": "error", "message": "Target inválido"}
+        
+        if not re.match(r"^[0-9A-Fa-f]{4}$", boot_id): return {"status": "error", "message": "ID inválido para efibootmgr"}
+        try:
+            result = subprocess.run(["sudo", "efibootmgr", "--bootnext", boot_id], capture_output=True, text=True, timeout=10)
+            if result.returncode != 0: return {"status": "error", "message": result.stderr.strip()}
+            return {"status": "ok", "message": f"Próximo boot: {name}", "boot_id": boot_id, "target": target}
+        except Exception as e: return {"status": "error", "message": str(e)}
 
 def get_current_os() -> str:
     system = platform.system().lower()

@@ -1,22 +1,50 @@
 @echo off
 TITLE AuraLink Control Daemon
 SETLOCAL
-SET DAEMON_DIR=%~dp0..
-SET PYTHON_EXE=python.exe
-echo [i] Iniciando AuraLink Control para Windows...
-cd /d "%DAEMON_DIR%"
-%PYTHON_EXE% --version >nul 2>&1
+
+:: Ir al directorio del script y luego subir uno para llegar a la raiz del daemon
+cd /d "%~dp0.."
+echo [i] Directorio actual: %CD%
+
+:: Verificar Python
+python --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [!] ERROR: Python no esta instalado o no esta en el PATH.
-    echo Descargalo de https://www.python.org/
     pause
     exit /b
 )
-echo [i] Verificando dependencias de Python...
-%PYTHON_EXE% -m pip install fastapi uvicorn psutil pyyaml pyjwt bcrypt cryptography >nul
-powershell -Command "if (-not (Get-Module -ListAvailable AudioDeviceCmdlets)) { echo '[!] Aviso: Modulo AudioDeviceCmdlets no encontrado. El control de volumen podria fallar.'; echo '[i] Intenta: Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser' }"
-echo [i] Servidor iniciado en el puerto configurado (config.yaml)
-echo [i] No cierres esta ventana para mantener el control remoto activo.
+
+:: Verificar config.yaml
+if not exist "config.yaml" (
+    if exist "config.yaml.example" (
+        echo [i] Creando config.yaml desde ejemplo...
+        copy "config.yaml.example" "config.yaml"
+    ) else (
+        echo [!] ERROR: No se encuentra config.yaml ni su ejemplo.
+        pause
+        exit /b
+    )
+)
+
+:: Instalar dependencias
+echo [i] Verificando dependencias...
+python -m pip install -r requirements.txt --quiet
+if %errorlevel% neq 0 (
+    echo [!] ERROR al instalar dependencias.
+    pause
+    exit /b
+)
+
+:: Iniciar servidor
+echo [i] Iniciando AuraLink Control...
 echo.
-%PYTHON_EXE% src/main.py
+python src/main.py
+
+:: Si el servidor crashea, mostrar el error y pausar
+if %errorlevel% neq 0 (
+    echo.
+    echo [!] El servidor se detuvo con el codigo de error: %errorlevel%
+    pause
+)
+
 pause

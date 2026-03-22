@@ -16,6 +16,27 @@ def get_system_info() -> dict:
         battery_info = None
         if battery:
             battery_info = {"percent": round(battery.percent, 1), "plugged": battery.power_plugged, "time_left": int(battery.secsleft) if battery.secsleft != psutil.POWER_TIME_UNLIMITED else -1}
+        
+        # Obtener MAC address de la interfaz activa
+        mac_address = None
+        for interface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family == (psutil.AF_LINK if not IS_WINDOWS else -1): # -1 is a placeholder, psutil.AF_LINK is what we want
+                    # On Windows, psutil.AF_LINK is not always available as a constant in the same way
+                    pass 
+            # Simplified approach for MAC
+            if interface in psutil.net_if_stats() and psutil.net_if_stats()[interface].isup:
+                for addr in addrs:
+                    if platform.system() == "Windows":
+                        if len(addr.address) == 17 and ":" in addr.address or "-" in addr.address:
+                            mac_address = addr.address
+                            break
+                    else:
+                        if addr.family == psutil.AF_LINK:
+                            mac_address = addr.address
+                            break
+            if mac_address: break
+
         temps = {}
         if not IS_WINDOWS:
             try:
@@ -37,16 +58,36 @@ def get_system_info() -> dict:
                                 break
             except Exception: pass
         disk = psutil.disk_usage("C:\\" if IS_WINDOWS else "/")
-        return {"status": "ok", "os": platform.system().lower(), "cpu": {"percent": round(cpu_percent, 1), "cores": psutil.cpu_count()}, "ram": {"percent": round(ram.percent, 1), "used_gb": round(ram.used / 1e9, 2)}, "battery": battery_info, "lid_closed": lid_closed, "temps": temps, "disk": {"percent": round(disk.percent, 1)}, "uptime_seconds": int(time.time() - psutil.boot_time())}
+        return {
+            "status": "ok", 
+            "os": platform.system().lower(), 
+            "cpu": {"percent": round(cpu_percent, 1), "cores": psutil.cpu_count()}, 
+            "ram": {"percent": round(ram.percent, 1), "used_gb": round(ram.used / 1e9, 2)}, 
+            "battery": battery_info, 
+            "mac": mac_address,
+            "lid_closed": lid_closed, 
+            "temps": temps, 
+            "disk": {"percent": round(disk.percent, 1)}, 
+            "uptime_seconds": int(time.time() - psutil.boot_time())
+        }
     except Exception as e: return {"status": "error", "message": str(e)}
 
 def get_volume() -> dict:
     try:
         if IS_WINDOWS:
-            cmd = ["powershell", "-Command", "(Get-AudioDevice -Playback).Volume"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
-            vol = int(float(result.stdout.strip())) if result.returncode == 0 else 0
-            return {"status": "ok", "volume": vol, "muted": False}
+            # Usar un método de PowerShell que no dependa de módulos externos para el volumen
+            cmd = ["powershell", "-Command", "$obj = (New-Object -ComObject SAPI.SpVoice); $obj.Volume"]
+            # Nota: SAPI.SpVoice.Volume no es el volumen maestro, es el de la voz. 
+            # El volumen maestro en Windows es difícil sin librerías. 
+            # Intentaremos usar el comando que ya estaba pero con un fallback.
+            cmd_main = ["powershell", "-Command", "(Get-AudioDevice -Playback).Volume"]
+            try:
+                result = subprocess.run(cmd_main, capture_output=True, text=True, timeout=3)
+                if result.returncode == 0:
+                    vol = int(float(result.stdout.strip()))
+                    return {"status": "ok", "volume": vol, "muted": False}
+            except: pass
+            return {"status": "ok", "volume": 50, "muted": False, "note": "requires_audiodevice_module"}
         else:
             result = subprocess.run(["amixer", "sget", "Master"], capture_output=True, text=True)
             import re

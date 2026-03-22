@@ -5,16 +5,9 @@ import yaml
 import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
-from pathlib import Path
+from config import CONFIG
 
 logger = logging.getLogger("auralink.auth")
-
-def load_config():
-    paths = [Path("/opt/auralink-control/config.yaml"), Path(__file__).parent.parent / "config.yaml", Path(__file__).parent / "config.yaml"]
-    for path in paths:
-        if path.exists():
-            with open(path) as f: return yaml.safe_load(f)
-    raise FileNotFoundError("config.yaml not found")
 
 class RateLimiter:
     def __init__(self):
@@ -32,9 +25,8 @@ class RateLimiter:
         return False, 0
 
     def register_attempt(self, identifier: str, success: bool) -> bool:
-        config = load_config()
-        max_attempts = config["auth"]["max_attempts"]
-        lockout_minutes = config["auth"]["lockout_minutes"]
+        max_attempts = CONFIG["auth"]["max_attempts"]
+        lockout_minutes = CONFIG["auth"]["lockout_minutes"]
         if success:
             self.attempts[identifier] = []
             return False
@@ -50,15 +42,13 @@ rate_limiter = RateLimiter()
 
 def verify_pin(pin: str) -> bool:
     try:
-        config = load_config()
-        stored_hash = config["auth"]["pin_hash"].encode('utf-8')
+        stored_hash = CONFIG["auth"]["pin_hash"].encode('utf-8')
         return bcrypt.checkpw(pin.encode('utf-8'), stored_hash)
     except Exception: return False
 
 def create_token(client_ip: str) -> str:
-    config = load_config()
-    secret = config["auth"]["jwt_secret"]
-    expiry_hours = config["auth"]["jwt_expiry_hours"]
+    secret = CONFIG["auth"]["jwt_secret"]
+    expiry_hours = CONFIG["auth"]["jwt_expiry_hours"]
     payload = {
         "sub": client_ip,
         "iat": datetime.utcnow(),
@@ -68,16 +58,14 @@ def create_token(client_ip: str) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 def verify_token(token: str) -> dict | None:
-    config = load_config()
-    secret = config["auth"]["jwt_secret"]
+    secret = CONFIG["auth"]["jwt_secret"]
     try:
         payload = jwt.decode(token, secret, algorithms=["HS256"])
         return payload
     except Exception: return None
 
 def is_mac_allowed(mac: str | None) -> bool:
-    config = load_config()
-    allowed = config["security"].get("allowed_macs", [])
+    allowed = CONFIG["security"].get("allowed_macs", [])
     if not allowed: return True
     if not mac: return False
     return mac.lower() in [m.lower() for m in allowed]

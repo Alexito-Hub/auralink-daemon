@@ -1,5 +1,4 @@
 import logging
-import yaml
 import uvicorn
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Depends
@@ -9,9 +8,10 @@ from pydantic import BaseModel
 from auth import verify_pin, create_token, verify_token, rate_limiter, is_mac_allowed
 from boot import get_boot_entries, set_next_boot, get_current_os
 from system import get_system_info, get_volume, set_volume, shutdown_system, reboot_system, get_brightness, set_brightness, sleep_system
+from config import CONFIG, BASE_DIR
 
 try:
-    log_path = Path("/opt/auralink-control/logs")
+    log_path = BASE_DIR / "logs"
     log_path.mkdir(parents=True, exist_ok=True)
     handlers = [logging.FileHandler(log_path / "daemon.log"), logging.StreamHandler()]
 except Exception:
@@ -19,13 +19,6 @@ except Exception:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s", handlers=handlers)
 logger = logging.getLogger("auralink")
-
-def load_config():
-    paths = [Path("/opt/auralink-control/config.yaml"), Path(__file__).parent.parent / "config.yaml", Path(__file__).parent / "config.yaml"]
-    for path in paths:
-        if path.exists():
-            with open(path) as f: return yaml.safe_load(f)
-    raise FileNotFoundError("config.yaml not found")
 
 app = FastAPI(title="AuraLink Control", version="1.0.0", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
@@ -58,7 +51,7 @@ async def login(body: LoginRequest, request: Request):
         if blocked: raise HTTPException(status_code=429, detail="Bloqueado")
         raise HTTPException(status_code=401, detail="PIN incorrecto")
     token = create_token(ip)
-    return {"token": token, "expires_in_hours": load_config()["auth"]["jwt_expiry_hours"]}
+    return {"token": token, "expires_in_hours": CONFIG["auth"]["jwt_expiry_hours"]}
 
 @app.get("/auth/verify")
 async def verify(payload: dict = Depends(require_auth)):
@@ -137,5 +130,14 @@ async def ping():
     return {"status": "alive", "service": "auralink-control"}
 
 if __name__ == "__main__":
-    config = load_config()
-    uvicorn.run(app, host=config["server"]["host"], port=config["server"]["port"], ssl_certfile=config["server"]["cert"], ssl_keyfile=config["server"]["key"], log_level="info", access_log=True)
+    host = CONFIG["server"]["host"]
+    port = CONFIG["server"]["port"]
+    cert_path = BASE_DIR / CONFIG["server"]["cert"]
+    key_path = BASE_DIR / CONFIG["server"]["key"]
+    
+    if cert_path.exists() and key_path.exists():
+        logger.info(f"Iniciando servidor HTTPS en {host}:{port}")
+        uvicorn.run(app, host=host, port=port, ssl_certfile=str(cert_path), ssl_keyfile=str(key_path), log_level="info", access_log=True)
+    else:
+        logger.warning("Certificados SSL no encontrados o invalidos. Iniciando en modo HTTP.")
+        uvicorn.run(app, host=host, port=port, log_level="info", access_log=True)
