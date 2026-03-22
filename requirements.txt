@@ -5,3 +5,6 @@ pyyaml
 pyjwt
 bcrypt
 cryptography
+pycaw
+comtypes
+screen-brightness-control
