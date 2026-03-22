@@ -34,7 +34,7 @@ sudo ./uninstall.sh
 
 ## Archivos de Configuración
 La configuración principal se almacena en `config.yaml`. El sistema busca este archivo en las siguientes ubicaciones (en orden de prioridad):
-1. `/mnt/datos/AuraLink/config.yaml` (Partición compartida recomendada para Dual Boot).
+1. `/mnt/data/AuraLink/config.yaml` (Shared partition recommended for Dual Boot).
 2. `/opt/auralink-control/config.yaml`.
 
 Campos clave:

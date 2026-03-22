@@ -72,7 +72,11 @@ def get_volume() -> dict:
             volume = cast(interface, POINTER(IAudioEndpointVolume))
             return {"status": "ok", "volume": int(round(volume.GetMasterVolumeLevelScalar() * 100)), "muted": bool(volume.GetMute())}
         else:
-            result = subprocess.run(["amixer", "sget", "Master"], capture_output=True, text=True)
+            result = subprocess.run(["amixer", "-c", "0", "sget", "Master"], capture_output=True, text=True)
+            if result.returncode != 0 or not result.stdout:
+                result = subprocess.run(["amixer", "sget", "Master"], capture_output=True, text=True)
+            if result.returncode != 0 or not result.stdout:
+                result = subprocess.run(["amixer", "sget", "Speaker"], capture_output=True, text=True)
             import re
             match = re.search(r"\[(\d+)%\]", result.stdout)
             vol = int(match.group(1)) if match else 0
@@ -89,9 +93,19 @@ def set_volume(action: str, value: int = 10) -> dict:
             elif action == "mute": volume.SetMute(1, None)
             elif action == "unmute": volume.SetMute(0, None)
         else:
-            if action == "set": subprocess.run(["amixer", "sset", "Master", f"{value}%"], timeout=3)
-            elif action == "mute": subprocess.run(["amixer", "sset", "Master", "mute"], timeout=3)
-            elif action == "unmute": subprocess.run(["amixer", "sset", "Master", "unmute"], timeout=3)
+            control = "Master"
+            card = "0"
+            check = subprocess.run(["amixer", "-c", card, "sget", control], capture_output=True)
+            if check.returncode != 0:
+                check = subprocess.run(["amixer", "sget", "Master"], capture_output=True)
+                if check.returncode == 0: card = None
+                else: control = "Speaker"
+            cmd_base = ["amixer"]
+            if card: cmd_base += ["-c", card]
+            cmd_base += ["sset", control]
+            if action == "set": subprocess.run(cmd_base + [f"{value}%"], timeout=3)
+            elif action == "mute": subprocess.run(cmd_base + ["mute"], timeout=3)
+            elif action == "unmute": subprocess.run(cmd_base + ["unmute"], timeout=3)
         return {"status": "ok", **get_volume()}
     except Exception as e: return {"status": "error", "message": str(e)}
 def get_brightness() -> dict:

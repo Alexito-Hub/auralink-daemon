@@ -5,7 +5,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Detener servicio previo si existe
 sudo systemctl stop auralink-control > /dev/null 2>&1 || true
 
 INSTALL_DIR="/opt/auralink-control"
@@ -17,7 +16,6 @@ echo -e "║             AuraLink Control — Installer             ║"
 echo -e "╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# Funcion para ejecutar comandos silenciosamente y mostrar error solo si fallan
 run_step() {
     local desc=$1
     local cmd=$2
@@ -35,7 +33,6 @@ run_step() {
 
 echo -e "${YELLOW}[ FASE 1 ] Verificando entorno y dependencias...${NC}"
 
-# Verificar bloqueo de pacman
 if [ -f /var/lib/pacman/db.lck ]; then
     echo -e "  ${YELLOW}⚠ La base de datos de pacman esta bloqueada.${NC}"
     read -p "  ¿Desea forzar la eliminacion del bloqueo? (s/n): " REMOVE_LOCK
@@ -46,7 +43,7 @@ if [ -f /var/lib/pacman/db.lck ]; then
     fi
 fi
 
-run_step "Actualizando paquetes base" "sudo pacman -Sy --needed --noconfirm python python-pip efibootmgr ethtool alsa-utils iproute2 openssl brightnessctl"
+run_step "Actualizando paquetes base" "sudo pacman -Sy --needed --noconfirm python python-pip efibootmgr ethtool alsa-utils iproute2 openssl brightnessctl parted dosfstools"
 run_step "Instalando librerías Python" "sudo pip install fastapi \"uvicorn[standard]\" pyjwt bcrypt psutil pyyaml --break-system-packages --root-user-action=ignore"
 
 echo -e "\n${YELLOW}[ FASE 2 ] Configuración de Seguridad${NC}"
@@ -59,6 +56,48 @@ done
 
 PIN_HASH=$(python3 -c "import bcrypt; print(bcrypt.hashpw('$PIN'.encode(), bcrypt.gensalt()).decode())")
 JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
+echo -e "\n${YELLOW}[ FASE 2.5 ] Configuración de Partición Compartida (AURA)${NC}"
+AURA_PART=$(lsblk -dno NAME,LABEL | grep -i "AURA" | awk '{print "/dev/"$1}' | head -n1)
+
+if [ -n "$AURA_PART" ]; then
+    echo -e "  ${GREEN}✔ Partición 'AURA' detectada en $AURA_PART${NC}"
+    MOUNT_POINT=$(lsblk -no MOUNTPOINT "$AURA_PART" | head -n1)
+    if [ -z "$MOUNT_POINT" ]; then
+        MOUNT_POINT="/mnt/AuraLink"
+        run_step "Montando partición AURA" "sudo mkdir -p $MOUNT_POINT && sudo mount $AURA_PART $MOUNT_POINT"
+    fi
+    SHARED_DIR_LINUX="$MOUNT_POINT/AuraLink"
+    sudo mkdir -p "$SHARED_DIR_LINUX"
+else
+    echo -e "  ${YELLOW}⚠ No se encontró la partición 'AURA'.${NC}"
+    read -p "  ¿Desea crear una nueva partición compartida AURA? (s/n): " CREATE_AURA
+    if [ "$CREATE_AURA" = "s" ]; then
+        echo -e "\n  ${BLUE}Unidades disponibles:${NC}"
+        lsblk -dno NAME,SIZE,MODEL | grep -v "loop"
+        read -p "  Ingrese el dispositivo (ej: /dev/sda): " TARGET_DISK
+        if [ -b "$TARGET_DISK" ]; then
+            echo -e "  ${YELLOW}¡ADVERTENCIA! Se creará una partición de 500MB en $TARGET_DISK. Asegúrese de tener espacio libre.${NC}"
+            read -p "  ¿Confirmar operación? (s/n): " CONFIRM_PART
+            if [ "$CONFIRM_PART" = "s" ]; then
+                run_step "Creando partición AURA" "sudo parted -s $TARGET_DISK mkpart primary fat32 -500MiB 100%"
+                NEW_PART=$(lsblk -no NAME "$TARGET_DISK" | tail -n1)
+                AURA_PART="/dev/$NEW_PART"
+                run_step "Formateando partición AURA (FAT32)" "sudo mkfs.fat -F 32 -n AURA $AURA_PART"
+                MOUNT_POINT="/mnt/AuraLink"
+                run_step "Montando partición AURA" "sudo mkdir -p $MOUNT_POINT && sudo mount $AURA_PART $MOUNT_POINT"
+                
+                if ! grep -q "LABEL=AURA" /etc/fstab; then
+                    run_step "Configurando persistencia en fstab" "echo 'LABEL=AURA $MOUNT_POINT vfat defaults,nofail 0 2' | sudo tee -a /etc/fstab"
+                fi
+                SHARED_DIR_LINUX="$MOUNT_POINT/AuraLink"
+                sudo mkdir -p "$SHARED_DIR_LINUX"
+            fi
+        else
+            echo -e "  ${RED}✘ Dispositivo no válido.${NC}"
+        fi
+    fi
+fi
 
 echo -e "\n${YELLOW}[ FASE 3 ] Dual Boot${NC}"
 EFI_OUT=$(efibootmgr)
@@ -74,17 +113,17 @@ run_step "Preparando directorios" "sudo mkdir -p $INSTALL_DIR/{certs,logs} && su
 run_step "Copiando archivos" "cp -r ../* $INSTALL_DIR/"
 run_step "Generando certificados SSL" "openssl req -x509 -newkey rsa:2048 -keyout $INSTALL_DIR/certs/key.pem -out $INSTALL_DIR/certs/cert.pem -days 3650 -nodes -subj '/CN=auralink' -addext 'subjectAltName=IP:$LOCAL_IP'"
 
-# Determinar ruta de destino final del config.yaml
-SHARED_DIR_WIN="D:/AuraLink"
-SHARED_DIR_LINUX="/mnt/datos/AuraLink"
 FINAL_CONFIG_PATH="$INSTALL_DIR/config.yaml"
 
-if [ -d "$SHARED_DIR_LINUX" ]; then
+if [ -n "$SHARED_DIR_LINUX" ] && [ -d "$SHARED_DIR_LINUX" ]; then
     FINAL_CONFIG_PATH="$SHARED_DIR_LINUX/config.yaml"
-    echo -e "  ${BLUE}ℹ Detectada partición compartida. La configuración se guardará en: $FINAL_CONFIG_PATH${NC}"
+    echo -e "  ${BLUE}ℹ La configuración se guardará en la partición compartida: $FINAL_CONFIG_PATH${NC}"
+elif [ -d "/mnt/data/AuraLink" ]; then
+    SHARED_DIR_LINUX="/mnt/data/AuraLink"
+    FINAL_CONFIG_PATH="$SHARED_DIR_LINUX/config.yaml"
+    echo -e "  ${BLUE}ℹ Detectada partición heredada. La configuración se guardará en: $FINAL_CONFIG_PATH${NC}"
 fi
 
-# Crear config.yaml en la ubicación final
 sudo python3 -c "
 import yaml
 config = {

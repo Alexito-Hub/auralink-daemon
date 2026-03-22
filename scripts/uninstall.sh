@@ -10,7 +10,7 @@ NC='\033[0m'
 INSTALL_DIR="/opt/auralink-control"
 SERVICE_NAME="auralink-control.service"
 SUDOERS_FILE="/etc/sudoers.d/auralink-control"
-SHARED_CONFIG="/mnt/datos/AuraLink/config.yaml"
+SHARED_CONFIG="/mnt/data/AuraLink/config.yaml"
 
 clear
 echo -e "${RED}╔══════════════════════════════════════════════════════╗"
@@ -18,7 +18,6 @@ echo -e "║            AuraLink Control — Uninstaller            ║"
 echo -e "╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 
-# Funcion para ejecutar comandos silenciosamente
 run_step() {
     local desc=$1
     local cmd=$2
@@ -36,7 +35,6 @@ run_step "Deteniendo servicio $SERVICE_NAME" "sudo systemctl stop $SERVICE_NAME"
 run_step "Deshabilitando servicio" "sudo systemctl disable $SERVICE_NAME"
 run_step "Eliminando archivo de unidad" "sudo rm /etc/systemd/system/$SERVICE_NAME"
 
-# Matar cualquier proceso huérfano que use el puerto 8443 o sea main.py
 run_step "Limpiando procesos huérfanos (puerto 8443)" "sudo fuser -k 8443/tcp"
 run_step "Finalizando instancias de python AuraLink" "sudo pkill -f 'python.*main.py'"
 

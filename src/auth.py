@@ -31,7 +31,6 @@ class RateLimiter:
             self.attempts[identifier] = []
             return False
         now = time.time()
-        # Limpiar intentos antiguos (más de 5 minutos)
         self.attempts[identifier] = [t for t in self.attempts[identifier] if now - t < 300]
         self.attempts[identifier].append(now)
         if len(self.attempts[identifier]) >= max_attempts:
@@ -47,13 +46,9 @@ def verify_pin(pin: str) -> bool:
         if not stored_hash:
             logger.error("PIN_HASH no configurado en config.yaml")
             return False
-            
         if isinstance(stored_hash, str):
             stored_hash = stored_hash.strip().encode('utf-8')
-        
-        # El PIN debe ser string y lo codificamos a bytes para bcrypt
         pin_bytes = pin.encode('utf-8')
-        
         result = bcrypt.checkpw(pin_bytes, stored_hash)
         if not result:
             logger.warning(f"Fallo de autenticación: PIN incorrecto (longitud recibida: {len(pin)})")
@@ -82,18 +77,14 @@ def verify_token(token: str) -> dict | None:
 
 def is_mac_allowed(mac: str | None) -> bool:
     allowed = CONFIG.get("security", {}).get("allowed_macs", [])
-    # Si no hay nadie en la lista, permitimos el paso para el "Auto-Authorize" en el login
     if not allowed: return True
     if not mac: return False
     return mac.lower() in [m.lower() for m in allowed]
 
 def authorize_device(mac: str):
-    """Guarda permanentemente el ID del dispositivo en el config.yaml."""
     from config import CONFIG_FILE_PATH
     if not CONFIG_FILE_PATH: return
-    
     try:
-        # Evitar duplicados
         if "security" not in CONFIG: CONFIG["security"] = {"allowed_macs": []}
         if mac not in CONFIG["security"]["allowed_macs"]:
             CONFIG["security"]["allowed_macs"].append(mac)

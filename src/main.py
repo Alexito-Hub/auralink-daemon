@@ -11,10 +11,9 @@ from pydantic import BaseModel
 from auth import verify_pin, create_token, verify_token, rate_limiter, is_mac_allowed
 from boot import get_boot_entries, set_next_boot, get_current_os
 from system import get_system_info, get_volume, set_volume, shutdown_system, reboot_system, get_brightness, set_brightness, sleep_system
-from config import CONFIG, BASE_DIR
+from config import CONFIG, BASE_DIR, get_log_path
+log_path = get_log_path()
 try:
-    log_path = BASE_DIR / "logs"
-    log_path.mkdir(parents=True, exist_ok=True)
     handlers = [logging.FileHandler(log_path / "daemon.log"), logging.StreamHandler()]
 except Exception: handlers = [logging.StreamHandler()]
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s", handlers=handlers)
@@ -25,7 +24,7 @@ def is_admin():
         else: return os.getuid() == 0
     except Exception: return False
 if not is_admin():
-    logger.warning("¡ATENCION! Sin privilegios de Administrador/Root.")
+    logger.warning("ATENCION: Sin privilegios de Administrador/Root.")
 app = FastAPI(title="AuraLink Control", version="1.0.0", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET", "POST"], allow_headers=["*"])
 security = HTTPBearer()
@@ -45,16 +44,21 @@ class LoginRequest(BaseModel):
 async def login(body: LoginRequest, request: Request):
     ip = get_client_ip(request)
     locked, remaining = rate_limiter.is_locked(ip)
-    if locked: raise HTTPException(status_code=429, detail=f"Esperar {remaining}s")
-    if not is_mac_allowed(body.mac): raise HTTPException(status_code=403, detail="No autorizado")
+    if locked:
+        logger.warning(f"BLOQUEO: Intento de acceso desde IP bloqueada {ip}. Faltan {remaining}s")
+        raise HTTPException(status_code=429, detail=f"Esperar {remaining}s")
+    if not is_mac_allowed(body.mac):
+        logger.warning(f"ACCESO_DENEGADO: MAC {body.mac} no autorizada desde {ip}")
+        raise HTTPException(status_code=403, detail="No autorizado")
     success = verify_pin(body.pin)
     blocked = rate_limiter.register_attempt(ip, success)
     if not success:
         if blocked: raise HTTPException(status_code=429, detail="Bloqueado")
         raise HTTPException(status_code=401, detail="PIN incorrecto")
+    logger.info(f"LOGIN_EXITOSO: Dispositivo {body.mac} autenticado desde {ip}")
     from auth import authorize_device
     if not CONFIG.get("security", {}).get("allowed_macs") and body.mac: authorize_device(body.mac)
-    return {"token": create_token(ip), "expires_in_hours": CONFIG["auth"]["jwt_expiry_hours"]}
+    return {"token": create_token(ip), "expires_in_hours": CONFIG.get("auth", {}).get("jwt_expiry_hours", 24)}
 @app.get("/auth/verify")
 async def verify(payload: dict = Depends(require_auth)): return {"valid": True, "sub": payload.get("sub")}
 @app.get("/boot/status")
@@ -96,8 +100,13 @@ async def sleep(_: dict = Depends(require_auth)): return sleep_system()
 @app.get("/ping")
 async def ping(): return {"status": "alive", "service": "auralink-control"}
 if __name__ == "__main__":
-    host, port = CONFIG["server"]["host"], CONFIG["server"]["port"]
-    cert_path, key_path = BASE_DIR / CONFIG["server"]["cert"], BASE_DIR / CONFIG["server"]["key"]
+    host = CONFIG.get("server", {}).get("host", "0.0.0.0")
+    port = CONFIG.get("server", {}).get("port", 5000)
+    cert_path = BASE_DIR / CONFIG.get("server", {}).get("cert", "certs/cert.pem")
+    key_path = BASE_DIR / CONFIG.get("server", {}).get("key", "certs/key.pem")
     if cert_path.exists() and key_path.exists():
-        uvicorn.run(app, host=host, port=port, ssl_certfile=str(cert_path), ssl_keyfile=str(key_path), log_level="info")
-    else: uvicorn.run(app, host=host, port=port, log_level="info")
+        logger.info(f"Iniciando servidor HTTPS en {host}:{port}")
+        uvicorn.run(app, host=host, port=port, ssl_certfile=str(cert_path), ssl_keyfile=str(key_path), log_level="info", access_log=True)
+    else:
+        logger.warning("Certificados SSL no encontrados. Iniciando en modo HTTP.")
+        uvicorn.run(app, host=host, port=port, log_level="info", access_log=True)

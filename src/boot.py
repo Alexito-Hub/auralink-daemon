@@ -68,10 +68,13 @@ def set_next_boot(target: str) -> dict:
                 boot_id = find_arch_bcd_id()
             name = "Arch Linux"
         else: return {"status": "error", "message": "Target inválido"}
-        if not boot_id: return {"status": "error", "message": "ID no encontrado"}
+        if not boot_id: return {"status": "error", "message": "ID de Arch no configurado en config.yaml (arch_bcd_id)"}
         try:
+            check = subprocess.run(["bcdedit", "/enum", "firmware"], capture_output=True, text=True, timeout=5, errors="ignore")
+            if boot_id.lower() not in check.stdout.lower():
+                return {"status": "error", "message": f"El ID {boot_id} no fue encontrado en el BCD de Windows."}
             result = subprocess.run(["bcdedit", "/bootnext", boot_id], capture_output=True, text=True, timeout=10, errors="ignore")
-            if result.returncode != 0: return {"status": "error", "message": "Fallo bcdedit"}
+            if result.returncode != 0: return {"status": "error", "message": f"Fallo bcdedit: {result.stderr.strip()}"}
             return {"status": "ok", "message": f"Próximo boot: {name}", "boot_id": boot_id, "target": target}
         except Exception as e: return {"status": "error", "message": str(e)}
     else:
@@ -80,10 +83,13 @@ def set_next_boot(target: str) -> dict:
         else: return {"status": "error", "message": "Target inválido"}
         if not boot_id or not re.match(r"^[0-9A-Fa-f]{4}$", boot_id): return {"status": "error", "message": "ID inválido"}
         try:
+            check = subprocess.run(["efibootmgr"], capture_output=True, text=True)
+            if f"Boot{boot_id}" not in check.stdout:
+                return {"status": "error", "message": f"ID {boot_id} no encontrado en EFI."}
             cmd = ["efibootmgr", "--bootnext", boot_id]
             if os.getuid() != 0: cmd.insert(0, "sudo")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if result.returncode != 0: return {"status": "error", "message": "Error efibootmgr"}
+            if result.returncode != 0: return {"status": "error", "message": result.stderr.strip() or "Error efibootmgr"}
             return {"status": "ok", "message": f"Próximo boot: {name}", "boot_id": boot_id, "target": target}
         except Exception as e: return {"status": "error", "message": str(e)}
 def get_current_os() -> str:
