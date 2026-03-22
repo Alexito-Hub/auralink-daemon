@@ -1,43 +1,52 @@
-# AuraLink Daemon
-Control remoto multiplataforma (Linux/Windows) para gestión de energía, volumen, brillo y arranque dual.
+# AuraLink Control — Daemon
 
-## Características
-- **Multiplataforma**: Lógica nativa para Arch Linux (amixer/brightnessctl) y Windows (PowerShell/WMI).
-- **Gestión de Energía**: Apagado, Reinicio y Suspensión remota.
-- **Control de Hardware**: Ajuste preciso de volumen y brillo de pantalla.
-- **Dual Boot**: Selección del próximo sistema operativo mediante `efibootmgr` (BootNext).
-- **Seguridad**: Autenticación JWT, protección por PIN (bcrypt), Rate Limiting y MAC Whitelist opcional.
+Controlador remoto de bajo nivel para la gestión integral de energía, hardware y arranque dual en sistemas Linux (Arch) y Windows.
 
-## Gestión del Servicio (Linux)
+## Características Principales
 
-### Instalación Automática
-El repositorio incluye un script de configuración que instala dependencias, genera certificados SSL, configura el arranque dual y habilita el servicio de sistema:
+*   Lógica Nativa Real: Interacción directa con el hardware.
+    *   Linux: amixer (audio), brightnessctl (brillo), efibootmgr (EFI NVRAM).
+    *   Windows: PyCaw/COM (audio), WMI (brillo), BCDedit (boot manager).
+*   AURA Shared Partition: Soporte para una partición compartida (FAT32/exFAT) etiquetada como AURA que actúa como fuente única de verdad para la configuración entre ambos SO.
+*   Seguridad: Autenticación mediante PIN (hash bcrypt), tokens JWT firmados, Rate Limiting por IP y lista blanca de MACs.
+*   Gestión de Energía: Soporte real para Apagado, Reinicio y Suspensión (S3) en ambas plataformas.
+
+## Instalación y Configuración
+
+### Linux (Arch Linux)
+El instalador automatizado gestiona dependencias, certificados SSL y la partición compartida.
+
 ```bash
 cd auralink-daemon/scripts
 sudo ./setup.sh
 ```
+Durante la instalación, podrás elegir crear una partición AURA de 500MB si no existe, la cual se montará persistentemente en /mnt/data/AuraLink.
 
-### Desinstalación y Limpieza
-Para detener los servicios, eliminar la configuración y limpiar los archivos del sistema:
+### Windows
+1. Instala Python y asegúrate de marcar "Add to PATH".
+2. Ejecuta start_windows.bat como Administrador.
+   *   El script detectará automáticamente la letra de unidad de la partición AURA usando PowerShell y la usará como prioridad.
+
+## Gestión de Configuración
+
+El demonio busca el archivo de configuración siguiendo este orden estricto de prioridad:
+
+1.  Variable de Entorno: AURALINK_CONFIG_PATH (si está definida).
+2.  Partición Compartida: Archivo config.yaml dentro de la partición con etiqueta AURA.
+3.  Local: config.yaml en la raíz del demonio.
+4.  Legacy: /opt/auralink-control/config.yaml (Solo Linux).
+5.  Original Example: config.yaml.example (como último recurso, sin realizar copias automáticas).
+
+## Desinstalación Completa
+
+Para eliminar el servicio y realizar una depuración profunda del sistema (incluyendo la partición física):
+
 ```bash
 cd auralink-daemon/scripts
 sudo ./uninstall.sh
 ```
+El script permite desmontar la partición AURA, eliminar su entrada en /etc/fstab y borrar físicamente la partición del disco duro.
 
-## Configuración Manual (Windows)
-1. Instala Python y asegúrate de marcar "Add to PATH".
-2. Ejecuta `start_windows.bat` como Administrador para instalar dependencias e iniciar el servidor.
-3. (Opcional) Instala el módulo de audio para mayor precisión:
-   ```powershell
-   Install-Module -Name AudioDeviceCmdlets -Scope CurrentUser
-   ```
-
-## Archivos de Configuración
-La configuración principal se almacena en `config.yaml`. El sistema busca este archivo en las siguientes ubicaciones (en orden de prioridad):
-1. `/mnt/data/AuraLink/config.yaml` (Shared partition recommended for Dual Boot).
-2. `/opt/auralink-control/config.yaml`.
-
-Campos clave:
-- `pin_hash`: Hash bcrypt de tu PIN de 4 dígitos.
-- `boot`: IDs de las entradas EFI (ej: `0001` para Windows, `0002` para Arch).
-- `server`: Rutas de certificados SSL (obligatorio para HTTPS en la App).
+## Requisitos de Seguridad
+*   El servidor corre bajo HTTPS (puerto 8443 por defecto).
+*   Se requiere privilegios de Root/Administrador para interactuar con el hardware y la tabla de particiones.
