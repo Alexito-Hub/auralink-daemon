@@ -27,27 +27,19 @@ def get_path_by_label(label="AURA"):
 def get_config_path():
     env_path = os.environ.get("AURALINK_CONFIG_PATH")
     if env_path and Path(env_path).exists(): return Path(env_path)
+    
     label_file = get_path_by_label()
     if label_file and label_file.exists(): return label_file
+    
+    for name in ["config.yaml", "config.yaml.example"]:
+        local_path = Path(__file__).parent.parent / name
+        if local_path.exists(): return local_path
+    
     system = platform.system()
-    if system == "Windows":
-        program_data = os.environ.get("ProgramData")
-        paths = [
-            Path(program_data) / "AuraLink" / "config.yaml" if program_data else None,
-            Path("C:/AuraLink/config.yaml"),
-            Path("D:/AuraLink/config.yaml"),
-            Path(__file__).parent.parent / "config.yaml"
-        ]
-    else:
-        paths = [
-            Path("/mnt/data/AuraLink/config.yaml"),
-            Path("/etc/auralink/config.yaml"),
-            Path("/opt/auralink-control/config.yaml"),
-            Path("/mnt/c/AuraLink/config.yaml"),
-            Path(__file__).parent.parent / "config.yaml"
-        ]
-    for p in paths:
-        if p and p.exists(): return p
+    if system == "Linux":
+        opt_path = Path("/opt/auralink-control/config.yaml")
+        if opt_path.exists(): return opt_path
+    
     return None
 def attempt_migration(current_path: Path):
     shared_file = get_path_by_label()
